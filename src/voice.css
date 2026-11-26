@@ -1,0 +1,3 @@
+/* Spoken-maths controls */
+.listen-button{transition:background .16s,transform .16s}
+.listen-button:active{transform:scale(.96)}
