@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import './arithmetic.css';
+import './voice.css';
 
 const AVATARS = ['🦊', '🐼', '🐸', '🦋', '🐻', '🐰'];
 const MODES = [
@@ -16,6 +18,21 @@ const readSaved = () => {
   catch { return { profiles: [], activeId: null }; }
 };
 
+function speakMath(text) {
+  if (!('speechSynthesis' in window)) return false;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-US';
+  utterance.rate = 0.82;
+  utterance.pitch = 1.08;
+  const voices = window.speechSynthesis.getVoices();
+  utterance.voice = voices.find((voice) => /^en(-|_)/i.test(voice.lang) && /Samantha|Google.*English|Natural/i.test(voice.name))
+    || voices.find((voice) => /^en(-|_)/i.test(voice.lang))
+    || null;
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
 function App() {
   const [saved, setSaved] = useState(readSaved);
   const [screen, setScreen] = useState(saved.profiles.length ? 'home' : 'profiles');
@@ -31,8 +48,13 @@ function App() {
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); }, [saved]);
   useEffect(() => {
-    if (spoken && 'speechSynthesis' in window) window.speechSynthesis.cancel();
-  }, [screen, round, spoken]);
+    if (!spoken || screen !== 'play') {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      return undefined;
+    }
+    const timer = window.setTimeout(() => speakMath(question.prompt), 350);
+    return () => window.clearTimeout(timer);
+  }, [screen, round, spoken, question.prompt]);
 
   const question = useMemo(() => makeQuestion(mode, active?.age || 7, round), [mode, active?.age, round]);
 
@@ -73,11 +95,7 @@ function App() {
       setCelebrate(true);
       window.setTimeout(() => setCelebrate(false), 700);
     }
-    if (spoken && 'speechSynthesis' in window) {
-      const message = correct ? 'That is right! Great thinking!' : `Good try. The answer is ${question.answer}. Let’s try another one.`;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(message));
-    }
+    if (spoken) speakMath(correct ? 'That is right! Great thinking!' : `Good try. The answer is ${question.answer}. Let’s try another one.`);
   }
 
   function nextQuestion() {
@@ -96,11 +114,7 @@ function App() {
     setScreen('profiles');
   }
 
-  const sayPrompt = () => {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(question.prompt));
-  };
+  const sayPrompt = () => speakMath(question.prompt);
 
   if (screen === 'profiles') return <ProfileScreen profiles={saved.profiles} form={profileForm} setForm={setProfileForm} onSave={saveProfile} onChoose={chooseProfile} onEdit={editProfile} editingId={editingId} onCancel={() => { setEditingId(null); setScreen('home'); }} />;
 
@@ -109,7 +123,7 @@ function App() {
       <header className="topbar">
         <button className="brand" onClick={() => setScreen('home')} aria-label="Numbers home"><span className="brand-mark">N<span>.</span></span><span className="brand-name">numbers</span></button>
         <div className="topbar-right">
-          <button className={`sound-toggle ${spoken ? 'is-on' : ''}`} onClick={() => setSpoken(!spoken)} aria-pressed={spoken} title="Toggle spoken prompts"><span aria-hidden="true">{spoken ? '🔊' : '🔈'}</span><span className="sound-label">Read aloud</span></button>
+          <button className={`sound-toggle ${spoken ? 'is-on' : ''}`} onClick={() => setSpoken(!spoken)} aria-pressed={spoken} title="Toggle spoken maths"><span aria-hidden="true">{spoken ? '🔊' : '🔈'}</span><span className="sound-label">Auto-read maths</span></button>
           {active && <button className="profile-chip" onClick={() => setScreen('profiles')} aria-label={`Switch profile. Current profile: ${active.name}`}><span className="profile-avatar-small">{active.avatar}</span><span>{active.name}</span><span className="chevron">⌄</span></button>}
         </div>
       </header>
@@ -135,7 +149,7 @@ function App() {
       </main>}
 
       {screen === 'play' && <main className="play-view">
-        <div className="play-top"><button className="back-button" onClick={() => setScreen('home')}><span aria-hidden="true">←</span> Back to games</button><span className="round-label">ROUND {round + 1} <span>OF 5</span></span><button className="listen-button" onClick={sayPrompt} aria-label="Hear the question">🔊 <span>Hear it</span></button></div>
+        <div className="play-top"><button className="back-button" onClick={() => setScreen('home')}><span aria-hidden="true">←</span> Back to games</button><span className="round-label">ROUND {round + 1} <span>OF 5</span></span><button className="listen-button" onClick={sayPrompt} aria-label="Hear the maths question">🔊 <span>Hear the maths</span></button></div>
         <div className="round-track" aria-label={`Round ${round + 1} of 5`}><span style={{ width: `${((round + 1) / 5) * 100}%` }} /></div>
         <section className="question-card">
           <p className="eyebrow">{MODES.find((item) => item.id === mode)?.skill.toUpperCase()}</p><h1>{question.prompt}</h1>
