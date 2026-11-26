@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import './arithmetic.css';
 import './voice.css';
+import './helper.css';
 
 const AVATARS = ['🦊', '🐼', '🐸', '🦋', '🐻', '🐰'];
 const MODES = [
@@ -13,11 +14,11 @@ const MODES = [
   { id: 'division', title: 'Division', description: 'Share things equally between groups.', icon: '➗', tint: 'peach', skill: 'Sharing equally' },
 ];
 const STORAGE_KEY = 'numbers-game-v1';
+const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const readSaved = () => {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || { profiles: [], activeId: null }; }
   catch { return { profiles: [], activeId: null }; }
 };
-const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
 function speakMath(text) {
   if (!('speechSynthesis' in window)) return false;
@@ -67,21 +68,16 @@ function App() {
       const created = { id: crypto.randomUUID(), name, age: Number(profileForm.age), avatar: profileForm.avatar, games: 0, stars: 0, bestScore: 0 };
       setSaved((current) => ({ ...current, profiles: [...current.profiles, created], activeId: created.id }));
     }
-    setProfileForm({ name: '', age: '7', avatar: AVATARS[0] });
-    setScreen('home');
+    setProfileForm({ name: '', age: '7', avatar: AVATARS[0] }); setScreen('home');
   }
 
   function chooseProfile(id) { setSaved((current) => ({ ...current, activeId: id })); setScreen('home'); }
 
   function startGame(nextMode) {
-    const age = active?.age || 7;
-    let questions = makeDeck(nextMode, age);
-    const signature = deckSignature(questions);
-    // Avoid replaying the exact same five-question set when a child starts this game again.
+    let questions = makeDeck(nextMode, active?.age || 7);
     let attempts = 0;
-    while (signature === lastDeckByMode.current[nextMode] && attempts < 20) {
-      questions = makeDeck(nextMode, age);
-      attempts += 1;
+    while (deckSignature(questions) === lastDeckByMode.current[nextMode] && attempts < 20) {
+      questions = makeDeck(nextMode, active?.age || 7); attempts += 1;
     }
     lastDeckByMode.current[nextMode] = deckSignature(questions);
     setMode(nextMode); setGame({ questions, id: `${Date.now()}-${Math.random()}` });
@@ -98,7 +94,7 @@ function App() {
 
   function nextQuestion() {
     if (round >= 4) {
-      setSaved((current) => ({ ...current, profiles: current.profiles.map((item) => item.id === active?.id ? { ...item, games: item.games + 1, stars: item.stars + score, bestScore: Math.max(item.bestScore, score) } : item) }));
+      setSaved((current) => ({ ...current, profiles: current.profiles.map((item) => item.id === active?.id ? { ...item, games: (item.games || 0) + 1, stars: (item.stars || 0) + score, bestScore: Math.max(item.bestScore || 0, score) } : item) }));
       setScreen('complete');
     } else { setRound((current) => current + 1); setSelected(null); }
   }
@@ -122,8 +118,11 @@ function App() {
       <section className="progress-card" aria-label="Your learning progress"><div className="progress-intro"><span className="progress-icon">🌱</span><div><h2>Your number garden</h2><p>Every game helps you grow!</p></div></div><div className="stat"><strong>{active.games || 0}</strong><span>games played</span></div><div className="stat"><strong>{active.stars || 0} <span className="star-small">★</span></strong><span>stars earned</span></div><div className="progress-art" aria-hidden="true"><span>🌷</span><span>🌼</span><span>🌱</span></div></section>
       <div className="section-heading"><div><p className="eyebrow">PICK YOUR PLAY</p><h2>What shall we explore?</h2></div><span className="gentle-note">No rush — go at your own pace <span>♡</span></span></div>
       <section className="game-grid" aria-label="Choose a game">{MODES.map((item, index) => <button key={item.id} className={`game-card ${item.tint}`} onClick={() => startGame(item.id)}><span className="card-number">{String(index + 1).padStart(2, '0')}</span><span className="game-emoji" aria-hidden="true">{item.icon}</span><span className="game-card-text"><strong>{item.title}</strong><span>{item.description}</span></span><span className="skill-pill">{item.skill}</span><span className="card-arrow" aria-hidden="true">↗</span></button>)}</section>
+      <button className="helper-launch" onClick={() => setScreen('helper')}><span className="helper-launch-icon" aria-hidden="true">💡</span><span><strong>Math Helper</strong><small>Type a maths question and learn how to solve it.</small></span><span className="helper-launch-arrow" aria-hidden="true">→</span></button>
       <footer className="home-footer"><span>Made for curious minds, just like yours.</span><span className="footer-sun" aria-hidden="true">☼</span></footer>
     </main>}
+
+    {screen === 'helper' && <MathHelper onBack={() => setScreen('home')} />}
 
     {screen === 'play' && question && <main className="play-view">
       <div className="play-top"><button className="back-button" onClick={() => setScreen('home')}><span aria-hidden="true">←</span> Back to games</button><span className="round-label">ROUND {round + 1} <span>OF 5</span></span><button className="listen-button" onClick={sayPrompt} aria-label="Hear the maths question">🔊 <span>Hear the maths</span></button></div>
@@ -145,6 +144,91 @@ function App() {
   </div>;
 }
 
+function MathHelper({ onBack }) {
+  const [expression, setExpression] = useState('');
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  function solve(event) {
+    event.preventDefault(); setError(''); setResult(null);
+    try {
+      const parsed = parseMath(expression);
+      const solution = evaluateMath(parsed);
+      if (!Number.isFinite(solution.answer) || Math.abs(solution.answer) > 1000000) throw new Error('That answer is too big to show here. Try a smaller question.');
+      setResult(solution);
+    } catch (issue) { setError(issue.message || 'I could not read that. Try a question like 8 + 4.'); }
+  }
+
+  function useExample(value) { setExpression(value); setError(''); setResult(null); }
+
+  return <main className="helper-view">
+    <button className="back-button helper-back" onClick={onBack}><span aria-hidden="true">←</span> Back to games</button>
+    <section className="helper-card"><div className="helper-heading"><span className="helper-big-icon" aria-hidden="true">💡</span><div><p className="eyebrow">A FRIENDLY MATHS GUIDE</p><h1>Math Helper</h1><p>Type a maths question, and we’ll work it out together, one step at a time.</p></div></div>
+      <form className="helper-form" onSubmit={solve}><label htmlFor="math-expression">Your maths question</label><div className="math-input-row"><input id="math-expression" value={expression} onChange={(event) => { setExpression(event.target.value); setError(''); }} placeholder="Try 8 + 4 or (3 + 2) × 4" maxLength={80} autoComplete="off" aria-describedby="math-help"/><button type="submit">Solve it <span aria-hidden="true">→</span></button></div><small id="math-help">Use +, −, ×, ÷, or brackets. Example: 12 ÷ 3</small></form>
+      <div className="example-row" aria-label="Try an example">{['8 + 4', '15 − 7', '3 × 4', '20 ÷ 5'].map((example) => <button type="button" key={example} onClick={() => useExample(example)}>{example}</button>)}</div>
+      {error && <p className="helper-error" role="alert">{error}</p>}
+      {result && <section className="helper-result" aria-live="polite"><p className="eyebrow">LET’S FIGURE IT OUT</p><div className="helper-answer">{result.displayExpression} = <strong>{formatNumber(result.answer)}</strong></div><h2>Here’s how we solve it:</h2>{result.steps.length ? <ol>{result.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol> : <p className="helper-step-note">That number is already simple — there are no operations to work out.</p>}<p className="helper-cheer">Every step is progress. You’ve got this! 🌱</p><button className="helper-speak" type="button" onClick={() => speakMath(`${result.displayExpression} equals ${formatNumber(result.answer)}. ${result.steps.join('. ')}`)}>🔊 Read the answer and steps</button></section>}
+      <p className="helper-privacy">This helper solves basic number sums on this device. It doesn’t send your question anywhere.</p>
+    </section>
+  </main>;
+}
+
+function parseMath(input) {
+  const source = input.trim().replace(/[−–]/g, '-').replace(/[×✕]/g, '*').replace(/[÷]/g, '/');
+  if (!source) throw new Error('Type a maths question first, like 8 + 4.');
+  if (source.length > 80) throw new Error('That question is a little long. Try a shorter sum.');
+  const tokens = []; const pattern = /\s*(\d+(?:\.\d+)?|[()+\-*/])/y; let position = 0;
+  while (position < source.length) {
+    pattern.lastIndex = position; const match = pattern.exec(source);
+    if (!match) throw new Error('Use numbers, +, −, ×, ÷, and brackets only.');
+    tokens.push(match[1]); position = pattern.lastIndex;
+    if (tokens.length > 40) throw new Error('Try a shorter maths question.');
+  }
+  let cursor = 0;
+  function primary() {
+    const token = tokens[cursor++];
+    if (token === '(') { const node = expressionNode(); if (tokens[cursor++] !== ')') throw new Error('Add a closing bracket to finish your question.'); return node; }
+    if (token && /^\d/.test(token)) return { type: 'number', value: Number(token) };
+    throw new Error('Add a number, or put a sum inside the brackets.');
+  }
+  function product() {
+    let node = primary();
+    while (tokens[cursor] === '*' || tokens[cursor] === '/') { const operator = tokens[cursor++]; node = { type: 'operation', operator, left: node, right: primary() }; }
+    return node;
+  }
+  function expressionNode() {
+    let node = product();
+    while (tokens[cursor] === '+' || tokens[cursor] === '-') { const operator = tokens[cursor++]; node = { type: 'operation', operator, left: node, right: product() }; }
+    return node;
+  }
+  const tree = expressionNode();
+  if (cursor < tokens.length) throw new Error('Check the order of your numbers and maths signs.');
+  return { tree, displayExpression: source.replace(/\*/g, '×').replace(/\//g, '÷') };
+}
+
+function evaluateMath(parsed) {
+  const steps = [];
+  function visit(node) {
+    if (node.type === 'number') return node.value;
+    const left = visit(node.left); const right = visit(node.right); let answer;
+    if (node.operator === '+') answer = left + right;
+    if (node.operator === '-') answer = left - right;
+    if (node.operator === '*') answer = left * right;
+    if (node.operator === '/') {
+      if (right === 0) throw new Error('We can’t share by zero. Try a different number after the divide sign.');
+      answer = left / right;
+    }
+    if (!Number.isFinite(answer)) throw new Error('That sum is too tricky to calculate. Try a simpler one.');
+    const sign = { '+': '+', '-': '−', '*': '×', '/': '÷' }[node.operator];
+    const words = { '+': 'add', '-': 'take away', '*': 'multiply', '/': 'divide' }[node.operator];
+    steps.push(`${words[0].toUpperCase()}${words.slice(1)} ${formatNumber(left)} ${sign} ${formatNumber(right)} to get ${formatNumber(answer)}.`);
+    return answer;
+  }
+  return { answer: visit(parsed.tree), steps, displayExpression: parsed.displayExpression };
+}
+
+function formatNumber(number) { return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(4))); }
+
 function ProfileScreen({ profiles, form, setForm, onSave, onChoose, onEdit, editingId, onCancel }) {
   return <main className="profile-page"><header className="profile-brand"><span className="brand-mark">N<span>.</span></span><span className="brand-name">numbers</span></header><div className="profile-layout">
     <section className="profile-welcome"><div className="profile-illustration" aria-hidden="true"><span className="big-number">1</span><span className="bubble bubble-one">2</span><span className="bubble bubble-two">3</span><span className="tiny-star">✦</span><span className="tiny-flower">✿</span></div><p className="eyebrow">A HAPPY PLACE TO LEARN</p><h1>Numbers make<br/>wonderful things.</h1><p>Make a little profile so your games and progress are saved just for you.</p><span className="privacy-note"><span>🔒</span> Your profile stays on this device.</span></section>
@@ -164,8 +248,7 @@ function makeDeck(mode, age) {
   const max = age <= 6 ? 5 : age <= 8 ? 8 : 10;
   const questions = []; const seen = new Set(); let attempts = 0;
   while (questions.length < 5 && attempts < 300) {
-    const question = makeQuestion(mode, max);
-    const key = `${question.prompt}|${question.answer}`;
+    const question = makeQuestion(mode, max); const key = `${question.prompt}|${question.answer}`;
     if (!seen.has(key)) { seen.add(key); questions.push(question); }
     attempts += 1;
   }
@@ -173,45 +256,30 @@ function makeDeck(mode, age) {
   return questions;
 }
 
-function deckSignature(questions) { return questions.map(({ prompt, answer }) => `${prompt}:${answer}`).join('|'); }
+function deckSignature(questions) { return questions.map(({ prompt, answer, left, right, sequence }) => `${prompt}:${answer}:${left ?? ''}:${right ?? ''}:${sequence?.join(',') ?? ''}`).join('|'); }
 
 function makeQuestion(mode, max) {
-  if (mode === 'count') {
-    const answer = randomInt(1, max);
-    return { prompt: 'How many strawberries can you count?', answer, options: makeOptions(answer, max), visualCount: answer };
-  }
+  if (mode === 'count') { const answer = randomInt(1, max); return { prompt: 'How many strawberries can you count?', answer, options: makeOptions(answer, max), visualCount: answer }; }
   if (mode === 'compare') {
-    const left = randomInt(1, max); let right = randomInt(1, max);
-    while (right === left) right = randomInt(1, max);
+    const left = randomInt(1, max); let right = randomInt(1, max); while (right === left) right = randomInt(1, max);
     return { prompt: 'Which group has more?', left, right, answer: left > right ? 1 : 2, options: [1, 2] };
   }
   if (mode === 'sequence') {
-    const step = randomInt(1, 2); const start = randomInt(1, Math.max(1, max - step * 2));
-    const missingAt = randomInt(0, 2); const sequence = [start, start + step, start + step * 2].map((number, index) => index === missingAt ? null : number);
-    const answer = start + step * missingAt;
+    const step = randomInt(1, 2); const start = randomInt(1, Math.max(1, max - step * 2)); const missingAt = randomInt(0, 2);
+    const sequence = [start, start + step, start + step * 2].map((number, index) => index === missingAt ? null : number); const answer = start + step * missingAt;
     return { prompt: 'Which number belongs in the empty space?', sequence, answer, options: makeOptions(answer, max) };
   }
-
-  const config = {
-    addition: { operator: '+', words: 'plus' }, subtraction: { operator: '−', words: 'take away' },
-    multiplication: { operator: '×', words: 'times' }, division: { operator: '÷', words: 'divided by' },
-  }[mode];
+  const config = { addition: { operator: '+', words: 'plus' }, subtraction: { operator: '−', words: 'take away' }, multiplication: { operator: '×', words: 'times' }, division: { operator: '÷', words: 'divided by' } }[mode];
   let left; let right; let answer; let optionLimit = max;
-  if (mode === 'addition') {
-    left = randomInt(1, max - 1); right = randomInt(1, max - left); answer = left + right;
-  } else if (mode === 'subtraction') {
-    left = randomInt(2, max); right = randomInt(1, left - 1); answer = left - right;
-  } else if (mode === 'multiplication') {
-    left = randomInt(2, max); right = randomInt(2, max); answer = left * right; optionLimit = max * max;
-  } else {
-    right = randomInt(2, max); answer = randomInt(2, max); left = right * answer; optionLimit = max;
-  }
+  if (mode === 'addition') { left = randomInt(1, max - 1); right = randomInt(1, max - left); answer = left + right; }
+  else if (mode === 'subtraction') { left = randomInt(2, max); right = randomInt(1, left - 1); answer = left - right; }
+  else if (mode === 'multiplication') { left = randomInt(2, max); right = randomInt(2, max); answer = left * right; optionLimit = max * max; }
+  else { right = randomInt(2, max); answer = randomInt(2, max); left = right * answer; optionLimit = max; }
   return { prompt: `What is ${left} ${config.words} ${right}?`, left, right, operator: config.operator, answer, equation: true, options: makeOptions(answer, optionLimit) };
 }
 
 function makeOptions(answer, max) {
-  const options = new Set([answer]);
-  const candidates = [answer - 1, answer + 1, answer - 2, answer + 2, ...Array.from({ length: 8 }, () => randomInt(1, Math.max(max, 3)))];
+  const options = new Set([answer]); const candidates = [answer - 1, answer + 1, answer - 2, answer + 2, ...Array.from({ length: 8 }, () => randomInt(1, Math.max(max, 3)))];
   for (const candidate of candidates) { if (candidate > 0 && candidate !== answer) options.add(candidate); if (options.size >= 3) break; }
   return [...options].sort(() => Math.random() - 0.5);
 }
